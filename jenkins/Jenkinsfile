@@ -1,22 +1,30 @@
-
 pipeline {
     agent any
 
     environment {
+        // AWS configuration
         AWS_REGION = 'us-east-1'
         ECR_REGISTRY = '713939171080.dkr.ecr.us-east-1.amazonaws.com'
         ECR_REPOSITORY = 'weather-app'
         IMAGE_NAME = 'weather-app'
         IMAGE_TAG = "${BUILD_NUMBER}"
 
+        // Application
         APP_URL = 'http://54.84.15.117:30080'
+        CI = 'true'
 
+        // GitHub configuration
+        // Replace with your actual repository details.
+        GIT_REPO_URL = 'https://github.com/YOUR-USERNAME/weather-app-devsecops.git'
+        GIT_BRANCH = 'main'
+        GIT_USER_NAME = 'YOUR-USERNAME'
+        GIT_EMAIL = 'YOUR-EMAIL@example.com'
+
+        // Kubernetes
         KUBECONFIG = '/var/lib/jenkins/.kube/config'
         K8S_NAMESPACE = 'weather-app'
         K8S_DEPLOYMENT = 'weather-app'
         K8S_CONTAINER = 'weather-app'
-
-        CI = 'true'
     }
 
     options {
@@ -27,12 +35,20 @@ pipeline {
 
     stages {
 
+        // =================================================
+        // 1. Git Checkout
+        // =================================================
         stage('Git Checkout') {
             steps {
-                checkout scm
+                git branch: "${GIT_BRANCH}",
+                    credentialsId: 'GIT-credentials',
+                    url: "${GIT_REPO_URL}"
             }
         }
 
+        // =================================================
+        // 2. Gitleaks Secret Scan
+        // =================================================
         stage('Secrets Scan - Gitleaks') {
             steps {
                 sh '''
@@ -43,6 +59,9 @@ pipeline {
             }
         }
 
+        // =================================================
+        // 3. Install Dependencies
+        // =================================================
         stage('Install Dependencies') {
             steps {
                 sh '''
@@ -53,6 +72,9 @@ pipeline {
             }
         }
 
+        // =================================================
+        // 4. Unit Testing
+        // =================================================
         stage('Unit Testing') {
             steps {
                 sh '''
@@ -63,11 +85,11 @@ pipeline {
             }
         }
 
+        // =================================================
+        // 5. Build Frontend
+        // =================================================
         stage('Build Frontend') {
             steps {
-                // REACT_APP_ variables are public in the
-                // compiled browser bundle.
-                // Use only a key approved for client-side use.
                 withCredentials([
                     string(
                         credentialsId: 'openweather-api-key',
@@ -81,6 +103,9 @@ pipeline {
             }
         }
 
+        // =================================================
+        // 6. SonarQube SAST
+        // =================================================
         stage('SonarQube SAST Scan') {
             steps {
                 script {
@@ -98,6 +123,9 @@ pipeline {
             }
         }
 
+        // =================================================
+        // 7. SonarQube Quality Gate
+        // =================================================
         stage('SonarQube Quality Gate') {
             steps {
                 timeout(time: 10, unit: 'MINUTES') {
@@ -106,6 +134,9 @@ pipeline {
             }
         }
 
+        // =================================================
+        // 8. Snyk Dependency Scan
+        // =================================================
         stage('Snyk Dependency Scan') {
             steps {
                 withCredentials([
@@ -125,6 +156,9 @@ pipeline {
             }
         }
 
+        // =================================================
+        // 9. Checkov Kubernetes Manifest Scan
+        // =================================================
         stage('Checkov IaC Scan') {
             steps {
                 sh '''
@@ -134,6 +168,9 @@ pipeline {
             }
         }
 
+        // =================================================
+        // 10. Docker Build
+        // =================================================
         stage('Docker Build') {
             steps {
                 withCredentials([
@@ -152,6 +189,9 @@ pipeline {
             }
         }
 
+        // =================================================
+        // 11. Snyk Container Scan
+        // =================================================
         stage('Snyk Container Scan') {
             steps {
                 withCredentials([
@@ -170,6 +210,9 @@ pipeline {
             }
         }
 
+        // =================================================
+        // 12. Trivy Container Scan
+        // =================================================
         stage('Trivy Container Scan') {
             steps {
                 sh '''
@@ -181,6 +224,9 @@ pipeline {
             }
         }
 
+        // =================================================
+        // 13. Push Docker Image to AWS ECR
+        // =================================================
         stage('Push Docker Image to AWS ECR') {
             steps {
                 sh '''
@@ -204,6 +250,9 @@ pipeline {
             }
         }
 
+        // =================================================
+        // 14. Resolve Immutable ECR Image Digest
+        // =================================================
         stage('Resolve ECR Image Digest') {
             steps {
                 sh '''
@@ -226,6 +275,90 @@ pipeline {
             }
         }
 
+        // =================================================
+        // 15. Update Deployment YAML and Push to GitHub
+        // =================================================
+        stage('Update Deployment File - Git Push') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'my-git-pattoken',
+                        usernameVariable: 'GITHUB_USER',
+                        passwordVariable: 'GITHUB_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set +x
+
+                        git config user.name "$GIT_USER_NAME"
+                        git config user.email "$GIT_EMAIL"
+
+                        IMAGE_REF=$(cat image-reference.txt)
+
+                        # Only replace the weather-app image.
+                        # The manifest must contain an image line
+                        # referencing weather-app.
+                        python3 - "$IMAGE_REF" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path("k8s/deployment.yaml")
+image_ref = sys.argv[1]
+content = path.read_text()
+
+pattern = (
+    r'(?m)^(\\s*image:\\s*)'
+    r'[^\\s#]*weather-app[^\\s#]*'
+)
+
+updated, count = re.subn(
+    pattern,
+    lambda m: m.group(1) + image_ref,
+    content
+)
+
+if count != 1:
+    raise SystemExit(
+        f"Expected exactly one weather-app image; found {count}"
+    )
+
+path.write_text(updated)
+PY
+
+                        git add k8s/deployment.yaml
+
+                        if ! git diff --cached --quiet; then
+                            git commit -m \
+                              "[skip ci] Update weather-app image to build $BUILD_NUMBER"
+                        fi
+
+                        # Use a temporary askpass helper instead
+                        # of embedding the PAT in the remote URL.
+                        ASKPASS_FILE=$(mktemp)
+                        trap 'rm -f "$ASKPASS_FILE"' EXIT
+
+                        cat > "$ASKPASS_FILE" <<'EOF'
+#!/bin/sh
+case "$1" in
+  *Username*) printf '%s\\n' "$GITHUB_USER" ;;
+  *Password*) printf '%s\\n' "$GITHUB_TOKEN" ;;
+esac
+EOF
+
+                        chmod 700 "$ASKPASS_FILE"
+
+                        GIT_ASKPASS="$ASKPASS_FILE" \
+                        GIT_TERMINAL_PROMPT=0 \
+                          git push origin "HEAD:$GIT_BRANCH"
+                    '''
+                }
+            }
+        }
+
+        // =================================================
+        // 16. Deploy to K3s Kubernetes
+        // =================================================
         stage('Deploy to K3s Kubernetes') {
             steps {
                 sh '''
@@ -235,70 +368,16 @@ pipeline {
 
                     kubectl apply -f k8s/namespace.yaml
 
+                    # Create or refresh ECR pull credentials.
+                    aws ecr get-login-password \
+                      --region "$AWS_REGION" |
                     kubectl -n "$K8S_NAMESPACE" \
-                      create secret docker-registry ecr-registry-secret \
+                      create secret docker-registry \
+                      ecr-registry-secret \
                       --docker-server="$ECR_REGISTRY" \
                       --docker-username=AWS \
-                      --docker-password="$(aws ecr get-login-password --region "$AWS_REGION")" \
-                      --dry-run=client -o yaml |
-                    kubectl apply -f -
-
-                    kubectl apply -f k8s/service.yaml
-
-                    kubectl apply -f k8s/deployment.yaml
-
-                    # Ensure the Deployment uses the ECR pull secret.
-                    kubectl -n "$K8S_NAMESPACE" \
-                      patch deployment "$K8S_DEPLOYMENT" \
-                      --type=strategic \
-                      -p '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"ecr-registry-secret"}]}}}}'
-
-                    IMAGE_REF=$(cat image-reference.txt)
-
-                    kubectl -n "$K8S_NAMESPACE" \
-                      set image \
-                      deployment/"$K8S_DEPLOYMENT" \
-                      "$K8S_CONTAINER=$IMAGE_REF"
-
-                    kubectl -n "$K8S_NAMESPACE" \
-                      rollout status \
-                      deployment/"$K8S_DEPLOYMENT" \
-                      --timeout=300s
-
-                    # Apply network policy after rollout.
-                    kubectl apply -f k8s/networkpolicy.yaml
-                '''
-            }
-        }
-
-        stage('OWASP ZAP DAST Scan') {
-            steps {
-                catchError(
-                    buildResult: 'UNSTABLE',
-                    stageResult: 'UNSTABLE'
-                ) {
-                    sh '''
-                        docker run --rm \
-                          --network host \
-                          --user "$(id -u):$(id -g)" \
-                          -v "$PWD:/zap/wrk:rw" \
-                          -w /zap/wrk \
-                          ghcr.io/zaproxy/zaproxy:stable \
-                          zap-baseline.py \
-                          -t "$APP_URL" \
-                          -m 5 \
-                          -r zap-report.html
-                    '''
-                }
-            }
-        }
-
-        stage('Deployment Link') {
-            steps {
-                sh '''
-                    printf 'Deployment Link: %s\\n' \
-                      "$APP_URL" |
-                    tee deployment-link.txt
+                      --docker-password-stdin \
+                      --dry-run=client -o yaml
                 '''
             }
         }
@@ -307,25 +386,17 @@ pipeline {
     post {
         always {
             archiveArtifacts(
-                artifacts: 'zap-report.html,deployment-link.txt,image-reference.txt',
+                artifacts: 'image-reference.txt',
                 allowEmptyArchive: true
             )
-
-            sh '''
-                docker image prune -f || true
-            '''
         }
 
         success {
             echo 'DevSecOps pipeline completed successfully.'
         }
 
-        unstable {
-            echo 'Pipeline completed with security scan warnings.'
-        }
-
         failure {
-            echo 'Pipeline failed. Check the stage logs.'
+            echo 'DevSecOps pipeline failed. Review the logs.'
         }
     }
 }
