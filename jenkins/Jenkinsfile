@@ -10,8 +10,8 @@ pipeline {
         IMAGE_TAG = "${env.BUILD_NUMBER}"
         IMAGE_FULL = "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
-        SONAR_URL = 'http://13.233.27.122:9000'
-        APP_URL = 'http://13.233.27.122:30080'
+        SONAR_URL = 'http://13.207.2.142:9000'
+        APP_URL = 'http://13.207.2.142:30080'
 
         GIT_REPO_NAME = 'weather-app'
         GIT_USER_NAME = 'harinaik-123'
