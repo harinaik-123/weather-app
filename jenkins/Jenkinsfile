@@ -74,36 +74,35 @@ pipeline {
             }
         }
 
-        stage('SAST - SonarQube') {
-            steps {
-                script {
-                    def scannerHome = tool(
-                        name: 'sonar-scanner',
-                        type: 'hudson.plugins.sonar.SonarRunnerInstallation'
-                    )
+        
+stage('SAST') {
+    steps {
+        script {
+            def scannerHome = tool(
+                name: 'sonar-scanner',
+                type: 'hudson.plugins.sonar.SonarRunnerInstallation'
+            )
 
-                    withSonarQubeEnv('sonarqube') {
+            withSonarQubeEnv('sonarqube') {
+                sh '''
+                    echo "Testing SonarQube connection..."
 
-                        sh '''
-                            echo "Checking SonarQube server connectivity..."
+                    curl --fail --show-error \
+                         --connect-timeout 10 \
+                         "$SONAR_HOST_URL/api/server/version"
 
-                            curl --fail --silent --show-error \
-                                 --connect-timeout 10 \
-                                 --max-time 20 \
-                                 "$SONAR_HOST_URL/api/server/version"
+                    echo "Starting SonarQube analysis..."
+                '''
 
-                            echo "SonarQube server is reachable."
-                        '''
-
-                        sh """
-                            "${scannerHome}/bin/sonar-scanner"
-                        """
-                    }
-                }
+                sh """
+                    "${scannerHome}/bin/sonar-scanner"
+                """
             }
         }
+    }
+}
 
-        stage('Dependency Scan') {
+      stage('Dependency Scan') {
             steps {
                 withCredentials([
                     string(
