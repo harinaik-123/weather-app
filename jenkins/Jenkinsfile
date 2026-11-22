@@ -138,11 +138,11 @@ pipeline {
 
       environment {
         // Change this to your GitHub repository name that stores Kubernetes manifests.
-        GIT_REPO_NAME = 'weather-app-devsecops'
+        GIT_REPO_NAME = 'weather-app'
         // Change this to your Git email.
-        GIT_EMAIL = 'yaswanth.arumulla@gmail.com'
+        GIT_EMAIL = 'balaji123kousi@gmail.com'
         // Change this to your GitHub username.
-        GIT_USER_NAME = 'arumullayaswanth'
+        GIT_USER_NAME = 'harinaik-123'
         YAML_FILE = 'deployment.yaml'
       }
 
