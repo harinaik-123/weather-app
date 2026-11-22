@@ -3,7 +3,7 @@ pipeline {
 
   environment {
     // Change this to your AWS region.
-    AWS_REGION = 'us-east-1'
+    AWS_REGION = 'ap-south-1'
     // Change this to your ECR registry.
     ECR_REGISTRY = '736822755592.dkr.ecr.ap-south-1.amazonaws.com'
     // Change this to your ECR repository name.
