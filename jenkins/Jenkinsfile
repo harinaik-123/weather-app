@@ -91,12 +91,10 @@ pipeline {
       stage('Dependency Scan') {
     steps {
         withCredentials([
-            string(credentialsId: 'snyk-token', variable: 'SNYK_TOKEN')
-        ]) {
-            sh '''
-                snyk test --all-projects --severity-threshold=high || true
-            '''
-        }
+    string(credentialsId: 'snyk-token', variable: 'SNYK_TOKEN')
+]) {
+    sh 'snyk test --all-projects --severity-threshold=high'
+      }
     }
 }
 
